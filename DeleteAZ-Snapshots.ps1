@@ -85,14 +85,14 @@ if ($confirmation -eq 'Y' -or $confirmation -eq 'y') {
 
                     # Add the result to the results array
                     $results += [PSCustomObject]@{
-                        "S.NO."        = $serialNumber++
+                        "S.No."        = $serialNumber++
                         "SnapshotName" = $snapshot.Name
                         "Status" = "Deleted"
                     }
                 } catch {
                     Write-Host "Error deleting snapshot $($snapshot.Name)"
                     $results += [PSCustomObject]@{
-                        "S.NO."        = $serialNumber++
+                        "S.No."        = $serialNumber++
                         "SnapshotName" = $snapshot.Name
                         "Status" = "Failed to delete"
                     }
