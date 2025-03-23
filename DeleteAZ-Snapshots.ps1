@@ -1,5 +1,5 @@
 # Assuming Azure PowerShell module is already installed and automation accounts have necessary permissions for login
-Start-Transcript -Path ".\Deletion.txt"
+Start-Transcript -Path ".\Logs.txt"
 
 # Interactive login (Azure portal login)
 Function Silent-Login {
