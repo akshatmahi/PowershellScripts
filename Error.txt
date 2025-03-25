@@ -1,0 +1,8 @@
+Processing Subscription: Id
+Error setting context for subscription Id : Please provide a valid tenant or a valid subscription.
+
+Processing Subscription: --
+Error setting context for subscription -- : Please provide a valid tenant or a valid subscription.
+
+Error creating snapshot _Test3-25-2025_20250325 : Cannot bind argument to parameter 'ResourceGroupName' because it is null.
+Error creating snapshot _Test3-25-2025_20250325 : Cannot bind argument to parameter 'ResourceGroupName' because it is null.
