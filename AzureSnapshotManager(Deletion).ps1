@@ -12,7 +12,7 @@ Start-Transcript -Path $global:logFilePath
 
 # Main Form Configuration
 $global:form = New-Object System.Windows.Forms.Form
-$global:form.Text = "Azure Snapshot Manager v3.0"
+$global:form.Text = "Azure Snapshot Manager v3.1"
 $global:form.Size = New-Object System.Drawing.Size(800,600)
 $global:form.StartPosition = "CenterScreen"
 $global:form.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::FixedDialog
@@ -39,7 +39,6 @@ $btnLogin = New-Object System.Windows.Forms.Button
 $btnLogin.Text = "Connect to Azure"
 $btnLogin.Size = New-Object System.Drawing.Size(150,30)
 $btnLogin.Location = New-Object System.Drawing.Point(20,20)
-$btnLogin.Add_Click({ Start-Job -ScriptBlock { Connect-AzAccount } -Name "AzureLogin" })
 $loginGroup.Controls.Add($btnLogin)
 
 # Step 2: Subscription Management
@@ -54,15 +53,6 @@ $btnExportSubs.Text = "Export Subscriptions"
 $btnExportSubs.Size = New-Object System.Drawing.Size(150,30)
 $btnExportSubs.Location = New-Object System.Drawing.Point(20,20)
 $btnExportSubs.Enabled = $false
-$btnExportSubs.Add_Click({
-    try {
-        Get-AzSubscription | Select-Object -ExpandProperty Id | Out-File $global:subscriptionFilePath
-        Update-Log "Subscriptions exported to $global:subscriptionFilePath"
-        $txtFilter.Enabled = $true
-    } catch {
-        [System.Windows.Forms.MessageBox]::Show("Please login first!", "Error")
-    }
-})
 $subGroup.Controls.Add($btnExportSubs)
 
 # Step 3: Snapshot Filter
@@ -90,11 +80,25 @@ $progressGroup.Dock = [System.Windows.Forms.DockStyle]::Fill
 $tableLayout.Controls.Add($progressGroup, 0, 3)
 $tableLayout.SetColumnSpan($progressGroup, 2)
 
+$resultsPanel = New-Object System.Windows.Forms.Panel
+$resultsPanel.Dock = [System.Windows.Forms.DockStyle]::Fill
+$progressGroup.Controls.Add($resultsPanel)
+
 $txtResults = New-Object System.Windows.Forms.TextBox
 $txtResults.Multiline = $true
 $txtResults.ScrollBars = "Vertical"
 $txtResults.Dock = [System.Windows.Forms.DockStyle]::Fill
-$progressGroup.Controls.Add($txtResults)
+$resultsPanel.Controls.Add($txtResults)
+
+$btnCopy = New-Object System.Windows.Forms.Button
+$btnCopy.Text = "Copy"
+$btnCopy.Size = New-Object System.Drawing.Size(75,25)
+$btnCopy.Dock = [System.Windows.Forms.DockStyle]::Right
+$btnCopy.Add_Click({
+    [System.Windows.Forms.Clipboard]::SetText($txtResults.Text)
+    Update-Log "Results copied to clipboard"
+})
+$resultsPanel.Controls.Add($btnCopy)
 
 $progressBar = New-Object System.Windows.Forms.ProgressBar
 $progressBar.Dock = [System.Windows.Forms.DockStyle]::Bottom
@@ -137,8 +141,50 @@ function Update-Progress {
 
 # Event Handlers
 $btnLogin.Add_Click({
-    Start-Job -ScriptBlock { Connect-AzAccount } -Name "AzureLogin"
+    $btnLogin.Enabled = $false
     Update-Log "Starting Azure authentication..."
+    
+    try {
+        # Check for existing context first
+        $context = Get-AzContext -ErrorAction SilentlyContinue
+        if(-not $context) {
+            $authJob = Start-ThreadJob -ScriptBlock {
+                Connect-AzAccount
+            }
+            
+            Register-ObjectEvent -InputObject $authJob -EventName StateChanged -Action {
+                if ($authJob.State -eq 'Completed') {
+                    $global:form.Invoke([Action]{
+                        $btnExportSubs.Enabled = $true
+                        Update-Log "Authentication successful!"
+                    })
+                }
+            } | Out-Null
+        }
+        else {
+            $btnExportSubs.Enabled = $true
+            Update-Log "Using existing Azure session"
+        }
+    }
+    catch {
+        Update-Log "Authentication failed: $_"
+        $btnLogin.Enabled = $true
+    }
+})
+
+$btnExportSubs.Add_Click({
+    try {
+        Get-AzSubscription | Select-Object -ExpandProperty Id | Out-File $global:subscriptionFilePath
+        Update-Log "Subscriptions exported to $global:subscriptionFilePath"
+        $txtFilter.Enabled = $true
+    }
+    catch {
+        Update-Log "Error exporting subscriptions: $_"
+    }
+})
+
+$txtFilter.Add_TextChanged({
+    $btnStart.Enabled = (-not [string]::IsNullOrWhiteSpace($txtFilter.Text))
 })
 
 $btnStart.Add_Click({
@@ -155,9 +201,13 @@ $btnStart.Add_Click({
     )
     
     if($confirmation -eq "Yes") {
-        Start-ThreadJob -ScriptBlock {
+        $btnStart.Enabled = $false
+        $progressBar.Value = 0
+        
+        $cleanupJob = Start-ThreadJob -ScriptBlock {
             $subscriptionIds = Get-Content -Path $global:subscriptionFilePath | Where-Object { $_ -match '^[0-9a-fA-F-]{36}$' }
-            $progressBar.Maximum = $subscriptionIds.Count
+            $totalSubs = $subscriptionIds.Count
+            $processed = 0
             
             foreach ($subId in $subscriptionIds) {
                 try {
@@ -169,33 +219,32 @@ $btnStart.Add_Click({
                             Remove-AzSnapshot -ResourceGroupName $snapshot.ResourceGroupName `
                                 -SnapshotName $snapshot.Name -Force
                             Update-Log "Deleted $($snapshot.Name) in $subId"
-                        } catch {
+                        }
+                        catch {
                             Update-Log "Error deleting $($snapshot.Name): $_"
                         }
                     }
-                } catch {
+                }
+                catch {
                     Update-Log "Error processing subscription $subId : $_"
                 }
-                Update-Progress (++$script:currentProgress)
+                
+                $processed++
+                Update-Progress (($processed / $totalSubs) * 100)
             }
         }
+        
+        Register-ObjectEvent -InputObject $cleanupJob -EventName StateChanged -Action {
+            if ($cleanupJob.State -eq 'Completed') {
+                $global:form.Invoke([Action]{
+                    $btnStart.Enabled = $true
+                    Update-Log "Cleanup process completed!"
+                    $progressBar.Value = 0
+                })
+            }
+        } | Out-Null
     }
 })
-
-# Status Check Timer
-$timer = New-Object System.Windows.Forms.Timer
-$timer.Interval = 1000
-$timer.Add_Tick({
-    if (Get-Job -Name "AzureLogin" -ErrorAction SilentlyContinue) {
-        if ((Get-Job "AzureLogin").State -eq "Completed") {
-            $btnExportSubs.Enabled = $true
-            $btnLogin.Enabled = $false
-            Update-Log "Authentication successful!"
-            Remove-Job -Name "AzureLogin"
-        }
-    }
-})
-$timer.Start()
 
 # Run the form
 [void]$global:form.ShowDialog()
