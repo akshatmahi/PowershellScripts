@@ -1,5 +1,5 @@
-ParserError: C:\Users\Vikas.Mahi\Desktop\Snapshot\Find-OrphanedDisks.ps1:65
+Get-AzConsumptionUsageDetail: C:\Users\Vikas.Mahi\Desktop\Snapshot\Find-OrphanedDisks.ps1:35
 Line |
-  65 |  … 0:yyyy-MM-dd} to {1:yyyy-MM-dd}" -f $billingPeriod.StartDate, $billin …
-     |                                                                ~
-     | Unexpected token ',' in expression or statement.
+  35 |          Get-AzConsumptionUsageDetail -StartDate $billingPeriod.StartD …
+     |          ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+     | Operation returned an invalid status code 'BadRequest'
