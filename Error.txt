@@ -1,12 +1,2 @@
-Get-AzStorageBlob -Container $_.Name -Context $ctx | Wher …
-     |              ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-     | This request is not authorized to perform this operation using this permission.
-     | RequestId:bc213b55-501e-007f-5c43-9e55d7000000 Time:2025-03-26T11:38:04.6358729Z Status: 403 (This request is
-     | not authorized to perform this operation using this permission.) ErrorCode: AuthorizationPermissionMismatch
-     | Content: ﻿<?xml version="1.0" encoding="utf-8"?><Error><Code>AuthorizationPermissionMismatch</Code><Message>This
-     | request is not authorized to perform this operation using this permission.
-     | RequestId:bc213b55-501e-007f-5c43-9e55d7000000 Time:2025-03-26T11:38:04.6358729Z</Message></Error>  Headers:
-     | Server: Windows-Azure-Blob/1.0,Microsoft-HTTPAPI/2.0 x-ms-request-id: bc213b55-501e-007f-5c43-9e55d7000000
-     | x-ms-client-request-id: 1cded7a4-a545-45b4-b659-d7e5cf2a02f4 x-ms-version: 2023-08-03 x-ms-error-code:
-     | AuthorizationPermissionMismatch Date: Wed, 26 Mar 2025 11:38:04 GMT Content-Length: 279 Content-Type:
-     | application/xml
+WARNING: Failed to get cost for /subscriptions/bd0b19fd-22fc-4727-984d-278408bda2e4/resourceGroups/RG-DAAS-VENDOR/providers/Microsoft.Compute/disks/avd-daas-1_OsDisk_1_1fe671a0ec9140889f9c5a8f110ef8c8 (The term 'Get-AzCostManagementQuery' is not recognized as a name of a cmdlet, function, script file, or executable program.
+Check the spelling of the name, or if a path was included, verify that the path is correct and try again.)
