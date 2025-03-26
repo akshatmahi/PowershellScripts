@@ -10,10 +10,6 @@ if (-not (Get-Module -ListAvailable -Name ImportExcel)) {
 }
 Import-Module ImportExcel -ErrorAction Stop
 
-# Date ranges
-$endDate = Get-Date
-$startDate = $endDate.AddDays(-30)
-
 # Initialize report
 $report = [System.Collections.Generic.List[object]]::new()
 
@@ -28,30 +24,45 @@ foreach ($sub in Get-AzSubscription) {
 
         Write-Host "Processing $($unattachedDisks.Count) unattached disks in $($sub.Name)" -ForegroundColor Cyan
 
-        # Get cost data for ALL disks in the subscription (more efficient)
+        # Get cost data for last 30 days using portal-like logic
+        $billingPeriod = @{
+            # Azure typically uses UTC dates for billing
+            StartDate = (Get-Date).AddDays(-30).ToUniversalTime().Date
+            EndDate   = (Get-Date).ToUniversalTime().Date
+        }
+
+        # Get consumption details with proper date formatting
+        $costEntries = Get-AzConsumptionUsageDetail -StartDate $billingPeriod.StartDate.ToString("yyyy-MM-dd") `
+                                                    -EndDate $billingPeriod.EndDate.ToString("yyyy-MM-dd") `
+                                                    -ErrorAction SilentlyContinue
+
+        if (-not $costEntries) {
+            Write-Warning "No cost data found for subscription $($sub.Name)"
+            continue
+        }
+
+        # Create cost lookup table
         $costData = @{}
-        Get-AzConsumptionUsageDetail -StartDate $startDate -EndDate $endDate -IncludeMeterDetails |
-        Where-Object { $_.ResourceType -eq 'microsoft.compute/disks' } |
-        ForEach-Object {
-            $costData[$_.ResourceId.ToLower()] = $_.PretaxCost
+        $costEntries | Where-Object { $_.ResourceType -eq 'microsoft.compute/disks' } | ForEach-Object {
+            $resourceId = $_.ResourceId.ToLower()
+            $costData[$resourceId] = [decimal]$_.PretaxCost
         }
 
         # Process each disk
         foreach ($disk in $unattachedDisks) {
-            $diskCost = $costData[$disk.Id.ToLower()] | Select-Object -First 1
-            $creationDate = $disk.TimeCreated
-            
+            $diskCost = if ($costData.ContainsKey($disk.Id.ToLower())) { $costData[$disk.Id.ToLower()] } else { 0 }
+
             $report.Add([PSCustomObject]@{
                 Subscription = $sub.Name
                 DiskName = $disk.Name
                 ResourceGroup = $disk.ResourceGroupName
                 SizeGB = $disk.DiskSizeGB
                 Location = $disk.Location
-                CreatedDate = $creationDate
-                Last30DaysCost = [decimal]($diskCost ?? 0)
+                Last30DaysCost = $diskCost
                 SKU = $disk.Sku.Name
                 DiskState = $disk.DiskState
                 ResourceId = $disk.Id
+                BillingPeriod = "{0:yyyy-MM-dd} to {1:yyyy-MM-dd}" -f $billingPeriod.StartDate, $billingPeriod.EndDate
             })
         }
     }
