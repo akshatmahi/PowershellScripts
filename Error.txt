@@ -1,1 +1,4 @@
-A parameter cannot be found that matches parameter name 'Parameter'.
+Line |
+  40 |          Get-AzConsumptionUsageDetail -StartDate $startDate -EndDate $ …
+     |          ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+     | Operation returned an invalid status code 'BadRequest'
