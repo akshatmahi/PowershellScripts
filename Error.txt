@@ -1,8 +1,91 @@
-Processing Subscription: Id
-Error setting context for subscription Id : Please provide a valid tenant or a valid subscription.
+[✓] Found VM: fpkd01abex1
+InvalidOperation: C:\Users\Vikas.Mahi\Desktop\Snapshot\Create-AzVmSnapshots.ps1:113
+Line |
+ 113 |          $resourceGroupName = $vm.Id.Split('/')[4]
+     |          ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+     | You cannot call a method on a null-valued expression.
+InvalidOperation: C:\Users\Vikas.Mahi\Desktop\Snapshot\Create-AzVmSnapshots.ps1:113
+Line |
+ 113 |          $resourceGroupName = $vm.Id.Split('/')[4]
+     |          ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+     | You cannot call a method on a null-valued expression.
 
-Processing Subscription: --
-Error setting context for subscription -- : Please provide a valid tenant or a valid subscription.
+ [×] Failed to determine Resource Group for VM: fpkd01abex1
 
-Error creating snapshot _Test3-25-2025_20250325 : Cannot bind argument to parameter 'ResourceGroupName' because it is null.
-Error creating snapshot _Test3-25-2025_20250325 : Cannot bind argument to parameter 'ResourceGroupName' because it is null.
+ [»] Processing Subscription: 86f3e747-fe98-4982-8d19-4da1b1f39db5
+ [»] Setting subscription context...
+
+ [✓] Context set to: AVD Island
+ [»] Searching for VM: fpkd01abex1
+
+ [✓] Found VM: fpkd01abex1
+InvalidOperation: C:\Users\Vikas.Mahi\Desktop\Snapshot\Create-AzVmSnapshots.ps1:113
+Line |
+ 113 |          $resourceGroupName = $vm.Id.Split('/')[4]
+     |          ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+     | You cannot call a method on a null-valued expression.
+InvalidOperation: C:\Users\Vikas.Mahi\Desktop\Snapshot\Create-AzVmSnapshots.ps1:113
+Line |
+ 113 |          $resourceGroupName = $vm.Id.Split('/')[4]
+     |          ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+     | You cannot call a method on a null-valued expression.
+
+ [×] Failed to determine Resource Group for VM: fpkd01abex1
+
+ [»] Processing Subscription: 5e7ac56b-b305-4c76-92a4-f8b29f873bd5
+ [»] Setting subscription context...
+
+ [✓] Context set to: CORP Foundation
+ [»] Searching for VM: fpkd01abex1
+
+ [✓] Found VM: fpkd01abex1
+InvalidOperation: C:\Users\Vikas.Mahi\Desktop\Snapshot\Create-AzVmSnapshots.ps1:113
+Line |
+ 113 |          $resourceGroupName = $vm.Id.Split('/')[4]
+     |          ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+     | You cannot call a method on a null-valued expression.
+InvalidOperation: C:\Users\Vikas.Mahi\Desktop\Snapshot\Create-AzVmSnapshots.ps1:113
+Line |
+ 113 |          $resourceGroupName = $vm.Id.Split('/')[4]
+     |          ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+     | You cannot call a method on a null-valued expression.
+
+ [×] Failed to determine Resource Group for VM: fpkd01abex1
+
+ [»] Processing Subscription: edb8bfd4-6c89-4044-8a23-cf9a3f7b368a
+ [»] Setting subscription context...
+
+ [✓] Context set to: DEV Foundation
+ [»] Searching for VM: fpkd01abex1
+
+ [✓] Found VM: fpkd01abex1
+ [»] Creating snapshot: FPKD01ABEX1-DiskCopy-20240721000508_Test-3-26-2025
+
+ [✓] Snapshot created: FPKD01ABEX1-DiskCopy-20240721000508_Test-3-26-2025
+ [»] Creating snapshot: fpkd01abex1-datadisk-01_Test-3-26-2025
+
+ [✓] Snapshot created: fpkd01abex1-datadisk-01_Test-3-26-2025
+ [»] Creating snapshot: fpkd01abex1-datadisk-02_Test-3-26-2025
+
+ [✓] Snapshot created: fpkd01abex1-datadisk-02_Test-3-26-2025
+ [»] Creating snapshot: fpkd01abex1-datadisk-03_Test-3-26-2025
+
+ [✓] Snapshot created: fpkd01abex1-datadisk-03_Test-3-26-2025
+
+ [»] Processing Subscription: 60001cd9-4918-4f4d-9d3b-78ab2fcc1840
+ [»] Setting subscription context...
+
+ [✓] Context set to: DMZ Foundation
+ [»] Searching for VM: fpkd01abex1
+
+ [✓] Found VM: fpkd01abex1
+InvalidOperation: C:\Users\Vikas.Mahi\Desktop\Snapshot\Create-AzVmSnapshots.ps1:113
+Line |
+ 113 |          $resourceGroupName = $vm.Id.Split('/')[4]
+     |          ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+     | You cannot call a method on a null-valued expression.
+InvalidOperation: C:\Users\Vikas.Mahi\Desktop\Snapshot\Create-AzVmSnapshots.ps1:113
+Line |
+ 113 |          $resourceGroupName = $vm.Id.Split('/')[4]
+     |          ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+     | You cannot call a method on a null-valued expression.
