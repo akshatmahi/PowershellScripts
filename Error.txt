@@ -1,1 +1,10 @@
-ERROR: 'costmanagement' is misspelled or not recognized by the system.
+There is a task assigned to me, I need to do cost optimization on Azure.
+Plan - I am thinking to fetch the Disk details from Azure which are unattached and not in used for Managed Disks.
+
+I also need to provide the average cost of the unattached Disk for past 30 days.
+
+How can I do it via automation like Python
+
+I also need a beautiful excel report.
+
+Ensure optimized code with Industry Standards and Beautification as well.
