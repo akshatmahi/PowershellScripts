@@ -1,76 +1,69 @@
-# Interactive browser login
-Connect-AzAccount
+# Enforce strict error handling
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
+
+# Authenticate with Azure
+Connect-AzAccount -UseDeviceAuthentication
 
 # Import required modules
-Import-Module Az.Accounts, Az.Compute, Az.Billing -ErrorAction Stop
+Import-Module Az.Accounts, Az.Compute, Az.Billing
 
-# Ensure ImportExcel is installed
-if (-not (Get-Module -ListAvailable -Name ImportExcel)) {
-    Install-Module -Name ImportExcel -Scope CurrentUser -Force
-}
-Import-Module ImportExcel -ErrorAction Stop
+# Configure dates (UTC required for Azure cost API)
+$endDate = (Get-Date).ToUniversalTime().Date
+$startDate = $endDate.AddDays(-30).ToString("yyyy-MM-dd")
+$endDate = $endDate.ToString("yyyy-MM-dd")
 
 # Initialize report
 $report = [System.Collections.Generic.List[object]]::new()
 
-# Date configuration
-$endDate = Get-Date
-$startDate = $endDate.AddDays(-30)
-
-# Process subscriptions
+# Process all subscriptions
 $subscriptions = Get-AzSubscription
-$totalSubs = $subscriptions.Count
-$currentSub = 0
-
 foreach ($sub in $subscriptions) {
-    $currentSub++
-    Write-Progress -Activity "Processing Subscriptions" -Status "$currentSub/$totalSubs - $($sub.Name)" -PercentComplete ($currentSub/$totalSubs*100)
-    
     try {
-        Set-AzContext -Subscription $sub.Id -ErrorAction Stop | Out-Null
+        Write-Host "Processing subscription: $($sub.Name)" -ForegroundColor Cyan
+        
+        # Set subscription context
+        Set-AzContext -Subscription $sub.Id | Out-Null
 
-        # Get unattached disks
+        # Get unattached managed disks
         $unattachedDisks = Get-AzDisk | Where-Object { $_.DiskState -eq 'Unattached' }
         if (-not $unattachedDisks) { continue }
 
-        Write-Host "Processing $($unattachedDisks.Count) disks in $($sub.Name)" -ForegroundColor Cyan
-
-        # Get cost data for all disks in subscription
+        # Retrieve cost data
         $costData = @{}
         Get-AzConsumptionUsageDetail -StartDate $startDate -EndDate $endDate |
-        Where-Object {
-            $_.ResourceType -eq 'microsoft.compute/disks' -and
-            $_.ResourceId -in $unattachedDisks.Id
-        } | ForEach-Object {
-            $costData[$_.ResourceId] = [decimal]$_.PretaxCost
-        }
+            Where-Object { 
+                $_.ResourceType -eq 'microsoft.compute/disks' -and
+                $_.ResourceId -in $unattachedDisks.Id
+            } |
+            ForEach-Object { 
+                $costData[$_.ResourceId] = [decimal]($costData[$_.ResourceId] + $_.PretaxCost)
+            }
 
-        # Generate report entries
+        # Build report
         foreach ($disk in $unattachedDisks) {
-            $diskCost = if ($costData.ContainsKey($disk.Id)) { $costData[$disk.Id] } else { 0 }
-            
             $report.Add([PSCustomObject]@{
-                Subscription = $sub.Name
-                DiskName = $disk.Name
-                ResourceGroup = $disk.ResourceGroupName
-                SizeGB = $disk.DiskSizeGB
-                Location = $disk.Location
-                Last30DaysCost = $diskCost
-                SKU = $disk.Sku.Name
-                DiskState = $disk.DiskState
-                ResourceId = $disk.Id
-                BillingPeriod = "$($startDate.ToString('yyyy-MM-dd')) to $($endDate.ToString('yyyy-MM-dd'))"
+                Subscription    = $sub.Name
+                DiskName        = $disk.Name
+                ResourceGroup   = $disk.ResourceGroupName
+                SizeGB          = $disk.DiskSizeGB
+                Location        = $disk.Location
+                CostLast30Days  = $costData[$disk.Id]
+                SKU             = $disk.Sku.Name
+                DiskState       = $disk.DiskState
+                ResourceId      = $disk.Id
+                BillingPeriod   = "$startDate to $endDate"
             })
         }
     }
     catch {
         Write-Warning "Error processing $($sub.Name): $_"
-        Write-Host "Verify you have 'Cost Management Reader' permissions" -ForegroundColor Red
+        Write-Host "Verify you have 'Cost Management Reader' permissions on this subscription" -ForegroundColor Red
     }
 }
 
 # Export results
-$excelPath = Join-Path $PWD.Path "DiskCosts_Report_$(Get-Date -Format 'yyyyMMdd-HHmmss').xlsx"
-$report | Export-Excel -Path $excelPath -AutoSize -TableStyle "Medium6"
+$excelPath = Join-Path $env:USERPROFILE "Downloads\DiskCosts_Report_$(Get-Date -Format 'yyyyMMdd-HHmmss').xlsx"
+$report | Export-Excel -Path $excelPath -AutoSize -TableStyle "Medium6" -FreezeTopRow
 
 Write-Host "Report generated: $excelPath" -ForegroundColor Green
