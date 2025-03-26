@@ -1,10 +1,1 @@
-Processing 52 disks in CORP Foundation
-WARNING: Error processing CORP Foundation: A parameter cannot be found that matches parameter name 'Query'.
-Processing 14 disks in DEV Foundation
-WARNING: Error processing DEV Foundation: A parameter cannot be found that matches parameter name 'Query'.
-Processing 2 disks in DMZ Foundation
-WARNING: Error processing DMZ Foundation: A parameter cannot be found that matches parameter name 'Query'.
-Processing 23 disks in TEST Foundation
-WARNING: Error processing TEST Foundation: A parameter cannot be found that matches parameter name 'Query'.
-Processing 2 disks in VENDOR Foundation
-WARNING: Error processing VENDOR Foundation: A parameter cannot be found that matches parameter name 'Query'.
+A parameter cannot be found that matches parameter name 'Parameter'.
