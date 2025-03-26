@@ -8,3 +8,7 @@ How can I do it via automation like Python
 I also need a beautiful excel report.
 
 Ensure optimized code with Industry Standards and Beautification as well.
+
+
+Error- Processed disk: PHYSICALDRIVE1-fpkt10msapp1a
+WARNING: Alternative cost fetch failed for disk PHYSICALDRIVE3-fpkt10msapp1a: A parameter cannot be found that matches parameter name 'ResourceIdOnly'
