@@ -13,7 +13,7 @@ Import-Module ImportExcel -ErrorAction Stop
 # Initialize report
 $report = [System.Collections.Generic.List[object]]::new()
 
-# Process subscriptions with error handling
+# Process subscriptions
 $subscriptions = Get-AzSubscription
 $totalSubs = $subscriptions.Count
 $currentSub = 0
@@ -25,14 +25,14 @@ foreach ($sub in $subscriptions) {
     try {
         Set-AzContext -Subscription $sub.Id -ErrorAction Stop | Out-Null
 
-        # Get all unattached disks
+        # Get unattached disks
         $unattachedDisks = Get-AzDisk | Where-Object { $_.DiskState -eq 'Unattached' }
         if (-not $unattachedDisks) { continue }
 
         Write-Host "Processing $($unattachedDisks.Count) disks in $($sub.Name)" -ForegroundColor Cyan
 
-        # Create cost management query (matches portal filters)
-        $query = @{
+        # Build cost query
+        $queryDefinition = @{
             type = "ActualCost"
             timeframe = "Custom"
             timePeriod = @{
@@ -40,13 +40,13 @@ foreach ($sub in $subscriptions) {
                 to   = (Get-Date).ToString("yyyy-MM-dd")
             }
             dataset = @{
+                granularity = "None"
                 aggregation = @{
                     totalCost = @{
-                        name = "Cost"
+                        name = "PreTaxCost"
                         function = "Sum"
                     }
                 }
-                granularity = "None"
                 filter = @{
                     and = @(
                         @{
@@ -60,7 +60,7 @@ foreach ($sub in $subscriptions) {
                             dimensions = @{
                                 name = "ResourceId"
                                 operator = "In"
-                                values = $unattachedDisks.Id
+                                values = @($unattachedDisks.Id)
                             }
                         }
                     )
@@ -68,36 +68,42 @@ foreach ($sub in $subscriptions) {
             }
         }
 
-        # Execute cost query
-        $costs = Invoke-AzCostManagementQuery -Scope "subscriptions/$($sub.Id)" `
-                -Query $query -ErrorAction Stop
+        # Convert to JSON with proper depth
+        $queryJson = $queryDefinition | ConvertTo-Json -Depth 10
 
-        # Build cost lookup table
+        # Execute cost query
+        $costResponse = Invoke-AzCostManagementQuery -Scope "subscriptions/$($sub.Id)" `
+                        -QueryObject $queryJson -ErrorAction Stop
+
+        # Process cost data
         $costData = @{}
-        foreach ($row in $costs.Properties.Rows) {
-            $resourceId = $row[1].ToLower()
-            $costData[$resourceId] = [decimal]$row[0]
+        if ($costResponse.Properties.Rows.Count -gt 0) {
+            foreach ($row in $costResponse.Properties.Rows) {
+                $costData[$row[1].ToLower()] = [decimal]$row[0]
+            }
         }
 
-        # Process disks
+        # Generate report entries
         foreach ($disk in $unattachedDisks) {
-            $diskId = $disk.Id.ToLower()
+            $diskCost = if ($costData.ContainsKey($disk.Id.ToLower())) { $costData[$disk.Id.ToLower()] } else { 0 }
+            
             $report.Add([PSCustomObject]@{
                 Subscription = $sub.Name
                 DiskName = $disk.Name
                 ResourceGroup = $disk.ResourceGroupName
                 SizeGB = $disk.DiskSizeGB
                 Location = $disk.Location
-                Last30DaysCost = $costData[$diskId] ?? 0
+                Last30DaysCost = $diskCost
                 SKU = $disk.Sku.Name
                 DiskState = $disk.DiskState
                 ResourceId = $disk.Id
-                QueryPeriod = $query.timePeriod
+                QueryPeriod = "$((Get-Date).AddDays(-30).ToString('yyyy-MM-dd')) to $((Get-Date).ToString('yyyy-MM-dd'))"
             })
         }
     }
     catch {
         Write-Warning "Error processing $($sub.Name): $($_.Exception.Message)"
+        Write-Host "Verify cost permissions for this subscription" -ForegroundColor Red
     }
 }
 
