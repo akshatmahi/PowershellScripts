@@ -24,28 +24,21 @@ foreach ($sub in Get-AzSubscription) {
 
         Write-Host "Processing $($unattachedDisks.Count) unattached disks in $($sub.Name)" -ForegroundColor Cyan
 
-        # Get cost data for last 30 days using portal-like logic
-        $billingPeriod = @{
-            # Azure typically uses UTC dates for billing
-            StartDate = (Get-Date).AddDays(-30).ToUniversalTime().Date
-            EndDate   = (Get-Date).ToUniversalTime().Date
-        }
-
-        # Get consumption details with proper date formatting
-        $costEntries = Get-AzConsumptionUsageDetail -StartDate $billingPeriod.StartDate.ToString("yyyy-MM-dd") `
-                                                    -EndDate $billingPeriod.EndDate.ToString("yyyy-MM-dd") `
-                                                    -ErrorAction SilentlyContinue
-
-        if (-not $costEntries) {
-            Write-Warning "No cost data found for subscription $($sub.Name)"
-            continue
-        }
-
-        # Create cost lookup table
+        # Get cost data using portal-like filters
         $costData = @{}
-        $costEntries | Where-Object { $_.ResourceType -eq 'microsoft.compute/disks' } | ForEach-Object {
-            $resourceId = $_.ResourceId.ToLower()
-            $costData[$resourceId] = [decimal]$_.PretaxCost
+        $billingPeriod = @{
+            StartDate = (Get-Date).AddDays(-30).ToString("yyyy-MM-dd")
+            EndDate   = (Get-Date).ToString("yyyy-MM-dd")
+        }
+
+        # Mirror portal filters: ResourceType = Microsoft.Compute/disks
+        Get-AzConsumptionUsageDetail -StartDate $billingPeriod.StartDate -EndDate $billingPeriod.EndDate |
+        Where-Object { 
+            $_.ResourceType -eq 'microsoft.compute/disks' -and
+            $_.ResourceId -in $unattachedDisks.Id
+        } |
+        ForEach-Object {
+            $costData[$_.ResourceId.ToLower()] = [decimal]$_.PretaxCost
         }
 
         # Process each disk
@@ -62,7 +55,9 @@ foreach ($sub in Get-AzSubscription) {
                 SKU = $disk.Sku.Name
                 DiskState = $disk.DiskState
                 ResourceId = $disk.Id
-                BillingPeriod = "{0:yyyy-MM-dd} to {1:yyyy-MM-dd}" -f $billingPeriod.StartDate, $billingPeriod.EndDate
+                BillingPeriod = ("{0:yyyy-MM-dd} to {1:yyyy-MM-dd}" -f `
+                    [datetime]$billingPeriod.StartDate, `
+                    [datetime]$billingPeriod.EndDate)
             })
         }
     }
