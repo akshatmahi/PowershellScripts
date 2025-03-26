@@ -2,7 +2,7 @@
 Connect-AzAccount
 
 # Import required modules
-Import-Module Az.Accounts, Az.Compute, Az.Billing -ErrorAction Stop
+Import-Module Az.Accounts, Az.Compute, Az.CostManagement -ErrorAction Stop
 
 # Ensure ImportExcel is installed
 if (-not (Get-Module -ListAvailable -Name ImportExcel)) {
@@ -13,56 +13,91 @@ Import-Module ImportExcel -ErrorAction Stop
 # Initialize report
 $report = [System.Collections.Generic.List[object]]::new()
 
-# Process all subscriptions
-foreach ($sub in Get-AzSubscription) {
+# Process subscriptions with error handling
+$subscriptions = Get-AzSubscription
+$totalSubs = $subscriptions.Count
+$currentSub = 0
+
+foreach ($sub in $subscriptions) {
+    $currentSub++
+    Write-Progress -Activity "Processing Subscriptions" -Status "$currentSub/$totalSubs - $($sub.Name)" -PercentComplete ($currentSub/$totalSubs*100)
+    
     try {
-        Set-AzContext -Subscription $sub.Id | Out-Null
-        
-        # Get unattached disks
+        Set-AzContext -Subscription $sub.Id -ErrorAction Stop | Out-Null
+
+        # Get all unattached disks
         $unattachedDisks = Get-AzDisk | Where-Object { $_.DiskState -eq 'Unattached' }
         if (-not $unattachedDisks) { continue }
 
-        Write-Host "Processing $($unattachedDisks.Count) unattached disks in $($sub.Name)" -ForegroundColor Cyan
+        Write-Host "Processing $($unattachedDisks.Count) disks in $($sub.Name)" -ForegroundColor Cyan
 
-        # Get cost data using portal-like filters
+        # Create cost management query (matches portal filters)
+        $query = @{
+            type = "ActualCost"
+            timeframe = "Custom"
+            timePeriod = @{
+                from = (Get-Date).AddDays(-30).ToString("yyyy-MM-dd")
+                to   = (Get-Date).ToString("yyyy-MM-dd")
+            }
+            dataset = @{
+                aggregation = @{
+                    totalCost = @{
+                        name = "Cost"
+                        function = "Sum"
+                    }
+                }
+                granularity = "None"
+                filter = @{
+                    and = @(
+                        @{
+                            dimensions = @{
+                                name = "ResourceType"
+                                operator = "In"
+                                values = @("Microsoft.Compute/disks")
+                            }
+                        },
+                        @{
+                            dimensions = @{
+                                name = "ResourceId"
+                                operator = "In"
+                                values = $unattachedDisks.Id
+                            }
+                        }
+                    )
+                }
+            }
+        }
+
+        # Execute cost query
+        $costs = Invoke-AzCostManagementQuery -Scope "subscriptions/$($sub.Id)" `
+                -Query $query -ErrorAction Stop
+
+        # Build cost lookup table
         $costData = @{}
-        $billingPeriod = @{
-            StartDate = (Get-Date).AddDays(-30).ToString("yyyy-MM-dd")
-            EndDate   = (Get-Date).ToString("yyyy-MM-dd")
+        foreach ($row in $costs.Properties.Rows) {
+            $resourceId = $row[1].ToLower()
+            $costData[$resourceId] = [decimal]$row[0]
         }
 
-        # Mirror portal filters: ResourceType = Microsoft.Compute/disks
-        Get-AzConsumptionUsageDetail -StartDate $billingPeriod.StartDate -EndDate $billingPeriod.EndDate |
-        Where-Object { 
-            $_.ResourceType -eq 'microsoft.compute/disks' -and
-            $_.ResourceId -in $unattachedDisks.Id
-        } |
-        ForEach-Object {
-            $costData[$_.ResourceId.ToLower()] = [decimal]$_.PretaxCost
-        }
-
-        # Process each disk
+        # Process disks
         foreach ($disk in $unattachedDisks) {
-            $diskCost = if ($costData.ContainsKey($disk.Id.ToLower())) { $costData[$disk.Id.ToLower()] } else { 0 }
-
+            $diskId = $disk.Id.ToLower()
             $report.Add([PSCustomObject]@{
                 Subscription = $sub.Name
                 DiskName = $disk.Name
                 ResourceGroup = $disk.ResourceGroupName
                 SizeGB = $disk.DiskSizeGB
                 Location = $disk.Location
-                Last30DaysCost = $diskCost
+                Last30DaysCost = $costData[$diskId] ?? 0
                 SKU = $disk.Sku.Name
                 DiskState = $disk.DiskState
                 ResourceId = $disk.Id
-                BillingPeriod = ("{0:yyyy-MM-dd} to {1:yyyy-MM-dd}" -f `
-                    [datetime]$billingPeriod.StartDate, `
-                    [datetime]$billingPeriod.EndDate)
+                QueryPeriod = $query.timePeriod
             })
         }
     }
     catch {
-        Write-Warning "Error processing subscription $($sub.Name): $_"
+        Write-Warning "Error processing $($sub.Name): $($_.Exception.Message)"
     }
 }
 
