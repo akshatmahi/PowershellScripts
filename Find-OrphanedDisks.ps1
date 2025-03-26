@@ -1,6 +1,4 @@
-# Require Azure PowerShell module
-# Install-Module -Name Az -Scope CurrentUser -Force
-# Install-Module -Name ImportExcel -Scope CurrentUser -Force
+# Simplified Orphaned Disk Finder with Safe Permissions Handling
 
 # Interactive browser login
 Connect-AzAccount
@@ -21,30 +19,46 @@ foreach ($sub in (Get-AzSubscription)) {
             ResourceGroup   = $_.ResourceGroupName
             SizeGB          = $_.DiskSizeGB
             Location        = $_.Location
-            LastWriteTime  = $_.TimeCreated
+            LastWriteTime   = $_.TimeCreated
         })
     }
 
-    # Unmanaged Disks (VHDs)
+    # Unmanaged Disks - Safe Check
     Get-AzStorageAccount | ForEach-Object {
-        $ctx = New-AzStorageContext -StorageAccountName $_.StorageAccountName -UseConnectedAccount
-        Get-AzStorageContainer -Context $ctx | ForEach-Object {
-            Get-AzStorageBlob -Container $_.Name -Context $ctx | Where-Object {
-                $_.Name -like '*.vhd' -and $_.BlobType -eq 'PageBlob'
-            } | ForEach-Object {
-                $report.Add([PSCustomObject]@{
-                    Subscription    = $sub.Name
-                    DiskName        = $_.Name
-                    Type            = "Unmanaged"
-                    ResourceGroup   = $_.StorageAccount.ResourceGroupName
-                    SizeGB          = [math]::Round($_.Length/1GB, 2)
-                    Location        = $ctx.StorageAccount.PrimaryLocation
-                    LastWriteTime   = $_.LastModified.DateTime
-                })
+        try {
+            $ctx = New-AzStorageContext -StorageAccountName $_.StorageAccountName -UseConnectedAccount -ErrorAction Stop
+            
+            # Only check common VHD containers
+            $containers = @('vhds', 'osdisks', 'disks') | ForEach-Object {
+                Get-AzStorageContainer -Name $_ -Context $ctx -ErrorAction SilentlyContinue
             }
+
+            foreach ($container in $containers) {
+                try {
+                    Get-AzStorageBlob -Container $container.Name -Context $ctx | Where-Object {
+                        $_.Name -like '*.vhd' -and $_.BlobType -eq 'PageBlob'
+                    } | ForEach-Object {
+                        $report.Add([PSCustomObject]@{
+                            Subscription    = $sub.Name
+                            DiskName        = $_.Name
+                            Type            = "Unmanaged"
+                            ResourceGroup   = $_.StorageAccount.ResourceGroupName
+                            SizeGB          = [math]::Round($_.Length/1GB, 2)
+                            Location        = $ctx.StorageAccount.PrimaryLocation
+                            LastWriteTime   = $_.LastModified.DateTime
+                        })
+                    }
+                } catch {
+                    Write-Warning "Skipping container $($container.Name) in $($_.StorageAccountName): $_"
+                }
+            }
+        } catch {
+            Write-Warning "Skipping storage account $($_.StorageAccountName): $_"
         }
     }
 }
 
-# Generate Excel report with formatting
-$report | Export-Excel -Path "./OrphanedDisks_Report.xlsx" -AutoSize -AutoFilter -BoldTopRow -FreezeTopRow -TableStyle "Medium6" -WorksheetName "OrphanedDisks" -ClearSheet
+# Generate report
+$report | Export-Excel -Path "./OrphanedDisks_Report.xlsx" -AutoSize -TableStyle "Medium6"
+
+Write-Host "Report generated: $pwd/OrphanedDisks_Report.xlsx" -ForegroundColor Green
