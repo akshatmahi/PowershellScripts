@@ -1,69 +1,102 @@
-# Enforce strict error handling
-Set-StrictMode -Version Latest
+# Enforce strict mode and error handling
+Set-StrictMode -Version 3.0
 $ErrorActionPreference = 'Stop'
 
-# Authenticate with Azure
+# Connect with explicit authentication
 Connect-AzAccount -UseDeviceAuthentication
 
-# Import required modules
-Import-Module Az.Accounts, Az.Compute, Az.Billing
+# Check critical modules
+$requiredModules = 'Az.Accounts', 'Az.Compute', 'Az.Billing'
+foreach ($module in $requiredModules) {
+    if (-not (Get-Module -ListAvailable $module)) {
+        Install-Module $module -Force -Scope CurrentUser
+    }
+    Import-Module $module -Force
+}
 
-# Configure dates (UTC required for Azure cost API)
-$endDate = (Get-Date).ToUniversalTime().Date
-$startDate = $endDate.AddDays(-30).ToString("yyyy-MM-dd")
-$endDate = $endDate.ToString("yyyy-MM-dd")
+# Date configuration (critical for Azure cost API)
+$endDate = [DateTime]::UtcNow.Date
+$startDate = $endDate.AddDays(-30)
+$dateFormat = "yyyy-MM-dd"
 
-# Initialize report
+# Initialize report with error tracking
 $report = [System.Collections.Generic.List[object]]::new()
+$errors = [System.Collections.Generic.List[string]]::new()
 
-# Process all subscriptions
-$subscriptions = Get-AzSubscription
-foreach ($sub in $subscriptions) {
+# Process subscriptions with enhanced logging
+foreach ($sub in Get-AzSubscription) {
     try {
-        Write-Host "Processing subscription: $($sub.Name)" -ForegroundColor Cyan
-        
-        # Set subscription context
+        Write-Host "`nProcessing subscription: $($sub.Name)" -ForegroundColor Cyan
         Set-AzContext -Subscription $sub.Id | Out-Null
 
-        # Get unattached managed disks
-        $unattachedDisks = Get-AzDisk | Where-Object { $_.DiskState -eq 'Unattached' }
-        if (-not $unattachedDisks) { continue }
+        # Get disks with state validation
+        $disks = Get-AzDisk | Where-Object { 
+            $_.DiskState -eq 'Unattached' -and
+            $_.TimeCreated -lt $endDate.AddDays(-2)  # Exclude disks <48h old
+        }
 
-        # Retrieve cost data
+        if (-not $disks) {
+            Write-Host "No unattached disks found." -ForegroundColor Yellow
+            continue
+        }
+
+        # Cost retrieval with explicit permissions check
+        try {
+            Write-Host "Checking cost permissions..."
+            $testCost = Get-AzConsumptionUsageDetail -StartDate $startDate.ToString($dateFormat) `
+                        -EndDate $endDate.ToString($dateFormat) -Top 1 -ErrorAction Stop
+        }
+        catch {
+            $errors.Add("Permission error in $($sub.Name): $($_.Exception.Message)")
+            continue
+        }
+
+        # Get costs with resource ID normalization
         $costData = @{}
-        Get-AzConsumptionUsageDetail -StartDate $startDate -EndDate $endDate |
-            Where-Object { 
+        Get-AzConsumptionUsageDetail -StartDate $startDate.ToString($dateFormat) `
+                                     -EndDate $endDate.ToString($dateFormat) |
+            Where-Object {
                 $_.ResourceType -eq 'microsoft.compute/disks' -and
-                $_.ResourceId -in $unattachedDisks.Id
+                $disks.Id.Contains($_.ResourceId.Trim().ToLower())
             } |
-            ForEach-Object { 
-                $costData[$_.ResourceId] = [decimal]($costData[$_.ResourceId] + $_.PretaxCost)
+            ForEach-Object {
+                $key = $_.ResourceId.Trim().ToLower()
+                $costData[$key] = [math]::Round([decimal]$_.PretaxCost, 2)
             }
 
-        # Build report
-        foreach ($disk in $unattachedDisks) {
+        # Build report with fallback values
+        foreach ($disk in $disks) {
+            $diskId = $disk.Id.Trim().ToLower()
             $report.Add([PSCustomObject]@{
                 Subscription    = $sub.Name
-                DiskName        = $disk.Name
+                DiskName       = $disk.Name
                 ResourceGroup   = $disk.ResourceGroupName
-                SizeGB          = $disk.DiskSizeGB
-                Location        = $disk.Location
-                CostLast30Days  = $costData[$disk.Id]
-                SKU             = $disk.Sku.Name
-                DiskState       = $disk.DiskState
-                ResourceId      = $disk.Id
-                BillingPeriod   = "$startDate to $endDate"
+                SizeGB         = $disk.DiskSizeGB
+                CostLast30Days = $costData.ContainsKey($diskId) ? $costData[$diskId] : 0
+                SKU            = $disk.Sku.Name
+                DiskState      = $disk.DiskState
+                ResourceId     = $diskId
+                LastModified   = $disk.TimeCreated.ToString("yyyy-MM-dd")
             })
         }
     }
     catch {
-        Write-Warning "Error processing $($sub.Name): $_"
-        Write-Host "Verify you have 'Cost Management Reader' permissions on this subscription" -ForegroundColor Red
+        $errors.Add("Error in $($sub.Name): $($_.Exception.Message)")
     }
 }
 
-# Export results
-$excelPath = Join-Path $env:USERPROFILE "Downloads\DiskCosts_Report_$(Get-Date -Format 'yyyyMMdd-HHmmss').xlsx"
-$report | Export-Excel -Path $excelPath -AutoSize -TableStyle "Medium6" -FreezeTopRow
+# Output results
+if ($report.Count -gt 0) {
+    $excelPath = Join-Path $env:USERPROFILE "Downloads\DiskCosts_$(Get-Date -Format 'yyyyMMdd-HHmmss').xlsx"
+    $report | Export-Excel -Path $excelPath -AutoSize -TableStyle Medium2
+    Write-Host "`nReport generated: $excelPath" -ForegroundColor Green
+}
+else {
+    Write-Host "`nNo cost data found for any disks." -ForegroundColor Yellow
+}
 
-Write-Host "Report generated: $excelPath" -ForegroundColor Green
+# Show errors if any
+if ($errors.Count -gt 0) {
+    Write-Host "`nEncountered errors:" -ForegroundColor Red
+    $errors | ForEach-Object { Write-Host " - $_" }
+}
