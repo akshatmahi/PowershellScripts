@@ -1,2 +1,5 @@
+ParserError: C:\Users\Vikas.Mahi\Desktop\Snapshot\Find-OrphanedDisks.ps1:65
 Line |
-  33 |          Get-AzConsumptionUsageDetail -StartDate $startDate -EndDate $
+  65 |  … 0:yyyy-MM-dd} to {1:yyyy-MM-dd}" -f $billingPeriod.StartDate, $billin …
+     |                                                                ~
+     | Unexpected token ',' in expression or statement.
