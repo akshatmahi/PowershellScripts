@@ -2,7 +2,7 @@
 # Save this as 'Get-DiskCosts.sh' and run in Azure Cloud Shell (Bash)
 
 # Authenticate with Azure
-az login --use-device-code
+az login
 
 # Configure dates
 end_date=$(date -u +"%Y-%m-%d")
