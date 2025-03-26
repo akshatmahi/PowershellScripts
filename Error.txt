@@ -1,2 +1,2 @@
-WARNING: Failed to get cost for /subscriptions/bd0b19fd-22fc-4727-984d-278408bda2e4/resourceGroups/RG-DAAS-VENDOR/providers/Microsoft.Compute/disks/avd-daas-1_OsDisk_1_1fe671a0ec9140889f9c5a8f110ef8c8 (The term 'Get-AzCostManagementQuery' is not recognized as a name of a cmdlet, function, script file, or executable program.
-Check the spelling of the name, or if a path was included, verify that the path is correct and try again.)
+Line |
+  33 |          Get-AzConsumptionUsageDetail -StartDate $startDate -EndDate $
