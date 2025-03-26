@@ -1,4 +1,6 @@
-Line |
-  40 |          Get-AzConsumptionUsageDetail -StartDate $startDate -EndDate $ …
-     |          ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-     | Operation returned an invalid status code 'BadRequest'
+Encountered errors:
+ - Permission error in CORP Foundation: Operation returned an invalid status code 'BadRequest'
+ - Permission error in DEV Foundation: Operation returned an invalid status code 'BadRequest'
+ - Permission error in DMZ Foundation: Operation returned an invalid status code 'BadRequest'
+ - Permission error in TEST Foundation: Operation returned an invalid status code 'BadRequest'
+ - Permission error in VENDOR Foundation: Operation returned an invalid status code 'BadRequest'
