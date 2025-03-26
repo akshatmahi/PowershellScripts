@@ -28,31 +28,38 @@ foreach ($subscription in $subscriptions) {
                 # Get disk cost for last 30 days
                 $startDate = (Get-Date).AddDays(-30)
                 $endDate = Get-Date
-                
+
                 try {
+                    # Modify the cost query to remove the problematic parameter
                     $costQuery = @{
-                        Type = 'Usage'
+                        Dimension = 'ResourceId'
+                        Name = 'Internal Resource'
+                        Operator = 'In'
+                        Values = @($disk.Id)
+                        Granularity = 'Daily'
                         TimeframeType = 'Custom'
-                        BillingPeriodStartDate = $startDate
-                        BillingPeriodEndDate = $endDate
-                        ShowDetails = $true
-                        ResourceIdOnly = $false
+                        StartDate = $startDate
+                        EndDate = $endDate
                     }
-                    
-                    $costData = Get-AzConsumptionUsageDetail @costQuery | 
-                                Where-Object { $_.InstanceId -eq $disk.Id }
-                    
-                    if ($costData) {
-                        $totalCost = ($costData | Measure-Object -Property PretaxCost -Sum).Sum
+
+                    # Use Get-AzCostManagementQueryResult instead of Get-AzConsumptionUsageDetail
+                    $costData = Get-AzCostManagementQueryResult -Scope "subscriptions/$($subscription.Id)" -QueryDefinition $costQuery
+
+                    if ($costData -and $costData.Row) {
+                        $totalCost = ($costData.Row | Measure-Object -Property 1 -Sum).Sum
                         $avgCost = if ($totalCost) { $totalCost / 30 } else { 0 }
+                    }
+                    else {
+                        $totalCost = 0
+                        $avgCost = 0
                     }
                 }
                 catch {
-                    Write-Warning "Alternative cost fetch failed for disk $($disk.Name): $_"
+                    Write-Warning "Cost fetch failed for disk $($disk.Name): $_"
                     $totalCost = 0
                     $avgCost = 0
                 }
-                                        
+
                 # Create custom object with disk details
                 $diskDetails = [PSCustomObject]@{
                     'Subscription Name' = $subscription.Name
@@ -67,7 +74,7 @@ foreach ($subscription in $subscriptions) {
                     'Creation Time' = $disk.TimeCreated
                     'Tags' = ($disk.Tags | ConvertTo-Json -Compress)
                 }
-                
+
                 $diskInfo += $diskDetails
                 Write-Host "Processed disk: $($disk.Name)" -ForegroundColor Yellow
             }
@@ -83,7 +90,7 @@ if ($diskInfo.Count -gt 0) {
     # Export to Excel with formatting
     $timestamp = Get-Date -Format 'yyyyMMdd_HHmmss'
     $excelPath = Join-Path -Path $PWD -ChildPath "UnattachedDisksReport_$timestamp.xlsx"
-    
+
     # Export to Excel
     $diskInfo | Export-Excel -Path $excelPath -WorksheetName 'Unattached Disks' -AutoSize -BoldTopRow -AutoFilter -FreezeTopRow
 
@@ -96,11 +103,11 @@ if ($diskInfo.Count -gt 0) {
     $worksheet.Cells["A1"].Value = "Azure Unattached Disks Report"
     $worksheet.Cells["A2"].Value = "Report Generated: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
     $worksheet.Cells["A3"].Value = "Total Unattached Disks: $($diskInfo.Count)"
-    
+
     # Format numbers
     $totalCost = ($diskInfo | Measure-Object 'Total Cost (30 days)' -Sum).Sum
     $totalStorage = ($diskInfo | Measure-Object 'Disk Size (GB)' -Sum).Sum
-    
+
     $worksheet.Cells["A4"].Value = "Total Storage (GB): $totalStorage"
     $worksheet.Cells["A5"].Value = "Total Monthly Cost: $($totalCost.ToString('C2'))"
     $worksheet.Cells["A6"].Value = "Average Daily Cost: $($($totalCost/30).ToString('C2'))"
