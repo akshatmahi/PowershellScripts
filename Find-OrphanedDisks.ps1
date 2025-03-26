@@ -2,63 +2,55 @@
 Connect-AzAccount
 
 # Import required modules
-Import-Module Az.Accounts
-Import-Module Az.Compute
-
-# Ensure Az.CostManagement is installed
-if (-not (Get-Module -ListAvailable -Name Az.CostManagement)) {
-    Write-Host "Az.CostManagement module not found. Installing now..." -ForegroundColor Yellow
-    Install-Module -Name Az.CostManagement -Scope CurrentUser -Force
-}
-Import-Module Az.CostManagement
+Import-Module Az.Accounts, Az.Compute, Az.CostManagement -ErrorAction Stop
 
 # Ensure ImportExcel is installed
 if (-not (Get-Module -ListAvailable -Name ImportExcel)) {
-    Write-Host "ImportExcel module not found. Installing now..." -ForegroundColor Yellow
+    Write-Host "Installing ImportExcel module..." -ForegroundColor Yellow
     Install-Module -Name ImportExcel -Scope CurrentUser -Force
 }
-Import-Module ImportExcel
+Import-Module ImportExcel -ErrorAction Stop
 
-# Define date ranges for cost retrieval
-$today = Get-Date
-$endDate = $today
-$thirtyDaysAgo = $today.AddDays(-30)
+# Define date ranges
+$endDate = Get-Date
+$thirtyDaysAgo = $endDate.AddDays(-30)
 
-# Function to query cost for a given resource and time period using Az.CostManagement
-function Get-CostForResource {
+# Function to get disk costs aggregated by ResourceId
+function Get-DiskCosts {
     param (
-        [Parameter(Mandatory=$true)]
         [string]$SubscriptionId,
-        [Parameter(Mandatory=$true)]
-        [string]$ResourceId,
-        [Parameter(Mandatory=$true)]
         [datetime]$FromDate,
-        [Parameter(Mandatory=$true)]
         [datetime]$ToDate
     )
 
-    $query = @{
-        type      = "ActualCost"
-        timeframe = "Custom"
-        timePeriod = @{
-            from = $FromDate.ToString("yyyy-MM-dd")
-            to   = $ToDate.ToString("yyyy-MM-dd")
+    $queryParams = @{
+        Type      = "ActualCost"
+        Timeframe = "Custom"
+        TimePeriod = @{
+            From = $FromDate.ToString("yyyy-MM-dd")
+            To   = $ToDate.ToString("yyyy-MM-dd")
         }
-        dataset = @{
-            granularity = "None"
-            aggregation = @{
-                totalCost = @{
-                    name     = "Cost"
-                    function = "Sum"
+        Dataset = @{
+            Granularity = "None"
+            Aggregation = @{
+                TotalCost = @{
+                    Name     = "Cost"
+                    Function = "Sum"
                 }
             }
-            filter = @{
-                and = @(
+            Grouping = @(
+                @{
+                    Type = "Dimension"
+                    Name = "ResourceId"
+                }
+            )
+            Filter = @{
+                And = @(
                     @{
-                        dimensions = @{
-                            name     = "ResourceId"
-                            operator = "In"
-                            values   = @($ResourceId)
+                        Dimensions = @{
+                            Name     = "ResourceType"
+                            Operator = "In"
+                            Values   = @("Microsoft.Compute/disks")
                         }
                     }
                 )
@@ -66,63 +58,132 @@ function Get-CostForResource {
         }
     }
 
-    # Increase the depth to ensure full JSON serialization
-    $queryJson = $query | ConvertTo-Json -Depth 10
+    try {
+        $result = Get-AzCostManagementQuery -Scope "/subscriptions/$SubscriptionId" `
+                    -Query ($queryParams | ConvertTo-Json -Depth 10)
+        
+        $costData = @{}
+        foreach ($row in $result.Properties.Rows) {
+            $costData[$row[1]] = [decimal]$row[0]  # ResourceId:Cost
+        }
+        return $costData
+    }
+    catch {
+        Write-Warning "Failed to retrieve costs for subscription $SubscriptionId ($($_.Exception.Message))"
+        return @{}
+    }
+}
+
+# Function to get cost for individual resource (for custom date ranges)
+function Get-ResourceCost {
+    param (
+        [string]$SubscriptionId,
+        [string]$ResourceId,
+        [datetime]$FromDate,
+        [datetime]$ToDate
+    )
+
+    $queryParams = @{
+        Type      = "ActualCost"
+        Timeframe = "Custom"
+        TimePeriod = @{
+            From = $FromDate.ToString("yyyy-MM-dd")
+            To   = $ToDate.ToString("yyyy-MM-dd")
+        }
+        Dataset = @{
+            Granularity = "None"
+            Aggregation = @{
+                TotalCost = @{
+                    Name     = "Cost"
+                    Function = "Sum"
+                }
+            }
+            Filter = @{
+                And = @(
+                    @{
+                        Dimensions = @{
+                            Name     = "ResourceId"
+                            Operator = "In"
+                            Values   = @($ResourceId)
+                        }
+                    }
+                )
+            }
+        }
+    }
 
     try {
-        $result = Get-AzCostManagementQuery -Scope "/subscriptions/$SubscriptionId" -Query $queryJson -ErrorAction Stop
-        if ($result.Properties.rows -and $result.Properties.rows.Count -gt 0) {
-            return [decimal]$result.Properties.rows[0][0]
-        }
-        else {
-            return 0
+        $result = Get-AzCostManagementQuery -Scope "/subscriptions/$SubscriptionId" `
+                    -Query ($queryParams | ConvertTo-Json -Depth 10)
+        
+        if ($result.Properties.Rows.Count -gt 0) {
+            return [decimal]$result.Properties.Rows[0][0]
         }
     }
     catch {
-        Write-Verbose "Error querying cost for resource $($ResourceId): $_"
-        return 0
+        Write-Warning "Failed to get cost for $ResourceId ($($_.Exception.Message))"
     }
+    return 0
 }
 
-# Initialize the report collection
+# Initialize report collection
 $report = [System.Collections.Generic.List[object]]::new()
 
-# Process all accessible subscriptions
-foreach ($sub in Get-AzSubscription) {
-    # Set context to the current subscription
-    Set-AzContext -Subscription $sub.Id | Out-Null
+# Process all subscriptions
+$subscriptions = Get-AzSubscription
+$totalSubs = $subscriptions.Count
+$currentSub = 0
 
-    # Retrieve unattached managed disks
-    Get-AzDisk | Where-Object { $_.DiskState -eq 'Unattached' } | ForEach-Object {
-        $disk = $_
-        $resourceId = $disk.Id
+foreach ($sub in $subscriptions) {
+    $currentSub++
+    Write-Progress -Activity "Processing Subscriptions" -Status "$currentSub/$totalSubs - $($sub.Name)" `
+                   -PercentComplete ($currentSub/$totalSubs*100)
 
-        # Calculate cost for the last 30 days
-        $costLast30Days = Get-CostForResource -SubscriptionId $sub.Id -ResourceId $resourceId -FromDate $thirtyDaysAgo -ToDate $endDate
+    try {
+        Set-AzContext -Subscription $sub.Id -ErrorAction Stop | Out-Null
+        
+        # Get all unattached disks
+        $unattachedDisks = Get-AzDisk | Where-Object { $_.DiskState -eq 'Unattached' }
+        if (-not $unattachedDisks) { continue }
 
-        # Calculate cost since the last write (using TimeCreated as a proxy for last write)
-        $costSinceLastWrite = Get-CostForResource -SubscriptionId $sub.Id -ResourceId $resourceId -FromDate $disk.TimeCreated -ToDate $endDate
+        Write-Host "Processing $($unattachedDisks.Count) unattached disks in $($sub.Name)" -ForegroundColor Cyan
 
-        # Add disk info along with cost details to the report
-        $report.Add([PSCustomObject]@{
-            Subscription       = $sub.Name
-            DiskName           = $disk.Name
-            Type               = "Managed"
-            ResourceGroup      = $disk.ResourceGroupName
-            SizeGB             = $disk.DiskSizeGB
-            Location           = $disk.Location
-            LastWriteTime      = $disk.TimeCreated
-            CostLast30Days     = $costLast30Days
-            CostSinceLastWrite = $costSinceLastWrite
-        })
+        # Get bulk costs for last 30 days
+        $bulkCosts = Get-DiskCosts -SubscriptionId $sub.Id -FromDate $thirtyDaysAgo -ToDate $endDate
+
+        # Process each disk
+        foreach ($disk in $unattachedDisks) {
+            Write-Host "  Analyzing disk: $($disk.Name)" -ForegroundColor DarkGray
+
+            # Get cost from bulk data
+            $monthlyCost = if ($bulkCosts.ContainsKey($disk.Id)) { $bulkCosts[$disk.Id] } else { 0 }
+
+            # Get cost since creation
+            $creationCost = Get-ResourceCost -SubscriptionId $sub.Id -ResourceId $disk.Id `
+                            -FromDate $disk.TimeCreated -ToDate $endDate
+
+            $report.Add([PSCustomObject]@{
+                Subscription       = $sub.Name
+                DiskName           = $disk.Name
+                ResourceGroup      = $disk.ResourceGroupName
+                SizeGB             = $disk.DiskSizeGB
+                Location           = $disk.Location
+                CreatedDate        = $disk.TimeCreated
+                CostLast30Days     = $monthlyCost
+                CostSinceCreation = $creationCost
+                DiskState          = $disk.DiskState
+                SKU                = $disk.Sku.Name
+            })
+        }
+    }
+    catch {
+        Write-Warning "Error processing subscription $($sub.Name): $($_.Exception.Message)"
     }
 }
 
-# Define the output Excel file path
-$excelFilePath = Join-Path -Path (Get-Location) -ChildPath "OrphanedDisks_Report.xlsx"
+# Export results
+$excelPath = Join-Path $PWD.Path "UnattachedDisks_CostReport_$(Get-Date -Format 'yyyyMMdd-HHmmss').xlsx"
+$report | Export-Excel -Path $excelPath -AutoSize -TableStyle "Medium6" -FreezeTopRow -BoldTopRow
 
-# Export the report to an Excel file without converting the data into an Excel table.
-# This avoids the automatic creation of features (AutoFilter, Table) that Excel later removes.
-$report | Export-Excel -Path $excelFilePath -AutoSize -TableStyle "None"
-
-Write-Host "Report generated: $excelFilePath" -ForegroundColor Green
+Write-Host "`nReport generated successfully: $excelPath" -ForegroundColor Green
+Write-Host "Total unattached disks found: $($report.Count)" -ForegroundColor Cyan
