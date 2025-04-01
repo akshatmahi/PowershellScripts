@@ -1,14 +1,10 @@
-There is a task assigned to me, I need to do cost optimization on Azure.
-Plan - I am thinking to fetch the Disk details from Azure which are unattached and not in used for Managed Disks.
+I don’t want to provide the Usernames in a comma separated,
 
-I also need to provide the average cost of the unattached Disk for past 30 days.
+I want to paste it like
 
-How can I do it via automation like Python
+for example
 
-I also need a beautiful excel report.
+adb.to.com 
+afg.to.com
 
-Ensure optimized code with Industry Standards and Beautification as well.
-
-
-Error- Processed disk: PHYSICALDRIVE1-fpkt10msapp1a
-WARNING: Alternative cost fetch failed for disk PHYSICALDRIVE3-fpkt10msapp1a: A parameter cannot be found that matches parameter name 'ResourceIdOnly'
+Make the box like that
