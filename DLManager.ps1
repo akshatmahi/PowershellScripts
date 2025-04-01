@@ -1,148 +1,114 @@
-<# USER MANAGEMENT SCRIPT v2.1 #>
-<# FEATURES:
-- Multi-line user input support
-- Improved UI layout with vertical spacing
-- Input validation and error handling
+<#
+DL Manager v3.0
+Author: Vikas Mahi
+Features:
+- Simple text-based interface
+- Exchange Online authentication
+- Multi-line user input
 - Activity logging
+- Error handling
 #>
 
-try {
-    Add-Type -AssemblyName System.Windows.Forms -ErrorAction Stop
-    Add-Type -TypeDefinition @"
-    using System;
-    using System.Runtime.InteropServices;
-    public class MsgBox {
-        [DllImport("user32.dll", CharSet = CharSet.Auto)]
-        public static extern int MessageBox(IntPtr hWnd, String text, String caption, int options);
-    }
-"@
+# Configuration
+$LogFile = "DL_Operations_$(Get-Date -Format 'yyyyMMdd-HHmmss').log"
 
-    # GUI VERSION
-    $form = New-Object System.Windows.Forms.Form
-    $form.Text = "DL Manager v2.1"
-    $form.Size = New-Object System.Drawing.Size(500, 400)
-    $form.StartPosition = "CenterScreen"
-    $form.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::FixedDialog
-
-    # Input Group
-    $groupBox = New-Object System.Windows.Forms.GroupBox
-    $groupBox.Text = "Distribution List Operations"
-    $groupBox.Location = New-Object System.Drawing.Point(10, 10)
-    $groupBox.Size = New-Object System.Drawing.Size(460, 250)
-
-    # User Input
-    $labelUser = New-Object System.Windows.Forms.Label
-    $labelUser.Text = "Enter UPNs (one per line):"
-    $labelUser.Location = New-Object System.Drawing.Point(15, 30)
-    $labelUser.AutoSize = $true
-
-    $textboxUsers = New-Object System.Windows.Forms.TextBox
-    $textboxUsers.Location = New-Object System.Drawing.Point(15, 50)
-    $textboxUsers.Size = New-Object System.Drawing.Size(420, 60)
-    $textboxUsers.Multiline = $true
-    $textboxUsers.ScrollBars = "Vertical"
-
-    # DL Input
-    $labelDL = New-Object System.Windows.Forms.Label
-    $labelDL.Text = "Target Distribution List:"
-    $labelDL.Location = New-Object System.Drawing.Point(15, 120)
-    $labelDL.AutoSize = $true
-
-    $textboxDL = New-Object System.Windows.Forms.TextBox
-    $textboxDL.Location = New-Object System.Drawing.Point(15, 140)
-    $textboxDL.Size = New-Object System.Drawing.Size(420, 20)
-
-    # Action Buttons
-    $btnAdd = New-Object System.Windows.Forms.Button
-    $btnAdd.Text = "Add Members"
-    $btnAdd.Location = New-Object System.Drawing.Point(15, 170)
-    $btnAdd.Size = New-Object System.Drawing.Size(100, 30)
-
-    $btnRemove = New-Object System.Windows.Forms.Button
-    $btnRemove.Text = "Remove Members"
-    $btnRemove.Location = New-Object System.Drawing.Point(135, 170)
-    $btnRemove.Size = New-Object System.Drawing.Size(120, 30)
-
-    # Status Bar
-    $statusBar = New-Object System.Windows.Forms.StatusBar
-    $statusBar.Text = "Ready"
+function Show-Banner {
+    Clear-Host
+    Write-Host @"
     
-    # Add controls
-    $groupBox.Controls.AddRange(@($labelUser, $textboxUsers, $labelDL, $textboxDL, $btnAdd, $btnRemove))
-    $form.Controls.Add($groupBox)
-    $form.Controls.Add($statusBar)
-
-    # Input Validation
-    $validateInputs = {
-        $btnAdd.Enabled = $btnRemove.Enabled = (
-            $textboxUsers.Text.Trim() -ne "" -and 
-            $textboxDL.Text.Trim() -ne ""
-        )
-    }
-
-    $textboxUsers.Add_TextChanged($validateInputs)
-    $textboxDL.Add_TextChanged($validateInputs)
-
-    # Button Actions
-    $executeOperation = {
-        param($action)
-        # Process multi-line input
-        $users = $textboxUsers.Text.Trim() -split "`r`n|`n" | 
-                ForEach-Object { $_.Trim() } | 
-                Where-Object { $_ -ne "" }
-        
-        $dlName = $textboxDL.Text.Trim()
-        $logFile = "DL_Operations_$(Get-Date -Format 'yyyyMMdd-HHmmss').log"
-
-        try {
-            $statusBar.Text = "Executing $action operation..."
-            $command = "$action-DistributionGroupMember -Identity '$dlName' -Members " + ($users -join ',') + " -Confirm:`$false"
-            $result = Invoke-Expression $command *>&1
-            
-            $result | Out-File $logFile -Append
-            [MsgBox]::MessageBox([IntPtr]::Zero, "Operation completed. Log saved to $logFile", "Success", 0)
-        }
-        catch {
-            $errorMessage = $_.Exception.Message
-            $statusBar.Text = "Error: $errorMessage"
-            [MsgBox]::MessageBox([IntPtr]::Zero, "Operation failed: $errorMessage", "Error", 0)
-        }
-        finally {
-            $statusBar.Text = "Ready"
-        }
-    }
-
-    $btnAdd.Add_Click({ & $executeOperation 'Add' })
-    $btnRemove.Add_Click({ & $executeOperation 'Remove' })
-
-    $form.ShowDialog() | Out-Null
+    ██████╗ ██╗      ███╗   ███╗ ██████╗ 
+    ██╔══██╗██║      ████╗ ████║██╔═══██╗
+    ██║  ██║██║█████╗██╔████╔██║██║   ██║
+    ██║  ██║██║╚════╝██║╚██╔╝██║██║   ██║
+    ██████╔╝██║      ██║ ╚═╝ ██║╚██████╔╝
+    ╚═════╝ ╚═╝      ╚═╝     ╚═╝ ╚═════╝ 
+          Distribution List Manager v3.0
+"@ -ForegroundColor Cyan
 }
-catch {
-    # TEXT-BASED FALLBACK
-    Write-Host "GUI unavailable. Switching to text mode..."
-    $users = Read-Host "Enter UPNs (comma-separated)"
-    $dlName = Read-Host "Enter Distribution List name"
-    
-    $action = Read-Host "Choose action (A)dd/(R)emove"
-    $logFile = "DL_Operations_$(Get-Date -Format 'yyyyMMdd-HHmmss').log"
-    
+
+function Connect-Exchange {
     try {
-        $command = @{
-            'A' = 'Add-DistributionGroupMember'
-            'R' = 'Remove-DistributionGroupMember'
-        }[$action.ToUpper()[0]]
-        
-        if (-not $command) { throw "Invalid action selected" }
-        
-        $users -split ',' | ForEach-Object {
-            $user = $_.Trim()
-            Invoke-Expression "$command -Identity '$dlName' -Member '$user' -Confirm:`$false" *>&1 | 
-                Tee-Object -FilePath $logFile -Append
+        # Check if EXO module is installed
+        if (-not (Get-Module -ListAvailable -Name ExchangeOnlineManagement)) {
+            Write-Host "Installing Exchange Online module..." -ForegroundColor Yellow
+            Install-Module ExchangeOnlineManagement -Force -Scope CurrentUser
         }
-        
-        Write-Host "Operation completed. Log saved to $logFile"
+
+        # Connect to Exchange Online
+        Write-Host "`nConnecting to Exchange Online..." -ForegroundColor Yellow
+        Connect-ExchangeOnline -ShowBanner:$false
+        Write-Host "Connected successfully!" -ForegroundColor Green
     }
     catch {
-        Write-Host "Error: $($_.Exception.Message)"
+        Write-Host "`nError: $($_.Exception.Message)" -ForegroundColor Red
+        Exit
     }
 }
+
+function Get-UserInput {
+    param($prompt)
+    Write-Host "`n$prompt" -ForegroundColor Yellow
+    Write-Host "Enter values (press Enter twice to finish):" -ForegroundColor DarkGray
+    $inputValues = @()
+    do {
+        $line = Read-Host
+        if ($line.Trim()) { $inputValues += $line.Trim() }
+    } while ($line -ne "")
+    return $inputValues
+}
+
+function Invoke-DLOperation {
+    param($action, $dlGroup, $users)
+    try {
+        $cmd = $action + "-DistributionGroupMember"
+        $batch = $users -join ","
+        
+        Write-Host "`nExecuting $action operation..." -ForegroundColor Yellow
+        Invoke-Command -ScriptBlock {
+            & $cmd -Identity $dlGroup -Members $batch -Confirm:$false -ErrorAction Stop
+        }
+
+        # Log results
+        "SUCCESS: $action operation completed for $dlGroup at $(Get-Date)" | Out-File $LogFile -Append
+        $users | ForEach-Object { "Processed: $_" | Out-File $LogFile -Append }
+        
+        Write-Host "`nOperation completed successfully!" -ForegroundColor Green
+        Write-Host "Log file created: $LogFile" -ForegroundColor DarkGray
+    }
+    catch {
+        "ERROR: $($_.Exception.Message)" | Out-File $LogFile -Append
+        Write-Host "`nError: $($_.Exception.Message)" -ForegroundColor Red
+    }
+}
+
+# Main Execution
+Show-Banner
+
+# Authentication
+Connect-Exchange
+
+# Operation Selection
+Write-Host "`nOperation Menu:" -ForegroundColor Yellow
+Write-Host "1. Add members to DL" -ForegroundColor Cyan
+Write-Host "2. Remove members from DL" -ForegroundColor Cyan
+$choice = Read-Host "`nEnter your choice (1/2)"
+
+# Validate choice
+if ($choice -notin @('1','2')) {
+    Write-Host "Invalid selection!" -ForegroundColor Red
+    Exit
+}
+
+# Get inputs
+$dlGroup = Read-Host "`nEnter Distribution Group name"
+$users = Get-UserInput -prompt "Enter user UPNs to process:"
+
+# Execute operation
+switch ($choice) {
+    '1' { Invoke-DLOperation -action "Add" -dlGroup $dlGroup -users $users }
+    '2' { Invoke-DLOperation -action "Remove" -dlGroup $dlGroup -users $users }
+}
+
+# Cleanup
+Write-Host "`nDisconnecting session..." -ForegroundColor Yellow
+Disconnect-ExchangeOnline -Confirm:$false | Out-Null
