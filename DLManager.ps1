@@ -1,12 +1,6 @@
 <#
-DL Manager v3.0
+DL Manager
 Author: Vikas Mahi
-Features:
-- Simple text-based interface
-- Exchange Online authentication
-- Multi-line user input
-- Activity logging
-- Error handling
 #>
 
 # Configuration
@@ -15,32 +9,23 @@ $LogFile = "DL_Operations_$(Get-Date -Format 'yyyyMMdd-HHmmss').log"
 function Show-Banner {
     Clear-Host
     Write-Host @"
-    
-    ██████╗ ██╗      ███╗   ███╗ ██████╗ 
-    ██╔══██╗██║      ████╗ ████║██╔═══██╗
-    ██║  ██║██║█████╗██╔████╔██║██║   ██║
-    ██║  ██║██║╚════╝██║╚██╔╝██║██║   ██║
-    ██████╔╝██║      ██║ ╚═╝ ██║╚██████╔╝
-    ╚═════╝ ╚═╝      ╚═╝     ╚═╝ ╚═════╝ 
-          Distribution List Manager v3.0
+    Distribution List Manager
 "@ -ForegroundColor Cyan
 }
 
 function Connect-Exchange {
     try {
-        # Check if EXO module is installed
-        if (-not (Get-Module -ListAvailable -Name ExchangeOnlineManagement)) {
-            Write-Host "Installing Exchange Online module..." -ForegroundColor Yellow
-            Install-Module ExchangeOnlineManagement -Force -Scope CurrentUser
+        if (-not (Get-Module -Name ExchangeOnlineManagement -ErrorAction SilentlyContinue)) {
+            Write-Host "Loading Exchange Online module..." -ForegroundColor Yellow
+            Import-Module ExchangeOnlineManagement -Force
         }
-
-        # Connect to Exchange Online
+        
         Write-Host "`nConnecting to Exchange Online..." -ForegroundColor Yellow
-        Connect-ExchangeOnline -ShowBanner:$false
+        Connect-ExchangeOnline -ShowBanner:$false -ErrorAction Stop
         Write-Host "Connected successfully!" -ForegroundColor Green
     }
     catch {
-        Write-Host "`nError: $($_.Exception.Message)" -ForegroundColor Red
+        Write-Host "`nConnection Error: $($_.Exception.Message)" -ForegroundColor Red
         Exit
     }
 }
@@ -48,7 +33,7 @@ function Connect-Exchange {
 function Get-UserInput {
     param($prompt)
     Write-Host "`n$prompt" -ForegroundColor Yellow
-    Write-Host "Enter values (press Enter twice to finish):" -ForegroundColor DarkGray
+    Write-Host "Enter values (one per line, blank line to finish):" -ForegroundColor DarkGray
     $inputValues = @()
     do {
         $line = Read-Host
@@ -61,47 +46,54 @@ function Invoke-DLOperation {
     param($action, $dlGroup, $users)
     try {
         $cmd = $action + "-DistributionGroupMember"
-        $batch = $users -join ","
+        $total = $users.Count
+        $current = 0
         
-        Write-Host "`nExecuting $action operation..." -ForegroundColor Yellow
-        Invoke-Command -ScriptBlock {
-            & $cmd -Identity $dlGroup -Members $batch -Confirm:$false -ErrorAction Stop
+        Write-Host "`nStarting $action operation..." -ForegroundColor Yellow
+        foreach ($user in $users) {
+            $current++
+            $progress = ($current / $total) * 100
+            Write-Progress -Activity "$action Members" -Status "Processing $user" `
+                -PercentComplete $progress -CurrentOperation "$current of $total"
+            
+            try {
+                & $cmd -Identity $dlGroup -Member $user -Confirm:$false -ErrorAction Stop
+                "SUCCESS: $user" | Out-File $LogFile -Append
+            }
+            catch {
+                "ERROR: $user - $($_.Exception.Message)" | Out-File $LogFile -Append
+                Write-Host " - Error with $user: $($_.Exception.Message)" -ForegroundColor Red
+            }
         }
-
-        # Log results
-        "SUCCESS: $action operation completed for $dlGroup at $(Get-Date)" | Out-File $LogFile -Append
-        $users | ForEach-Object { "Processed: $_" | Out-File $LogFile -Append }
         
-        Write-Host "`nOperation completed successfully!" -ForegroundColor Green
-        Write-Host "Log file created: $LogFile" -ForegroundColor DarkGray
+        Write-Host "`nOperation completed with details in log file:" -ForegroundColor Green
+        Write-Host $LogFile -ForegroundColor DarkGray
     }
     catch {
-        "ERROR: $($_.Exception.Message)" | Out-File $LogFile -Append
-        Write-Host "`nError: $($_.Exception.Message)" -ForegroundColor Red
+        Write-Host "`nFatal Error: $($_.Exception.Message)" -ForegroundColor Red
+        Exit
     }
 }
 
 # Main Execution
 Show-Banner
-
-# Authentication
 Connect-Exchange
 
 # Operation Selection
-Write-Host "`nOperation Menu:" -ForegroundColor Yellow
-Write-Host "1. Add members to DL" -ForegroundColor Cyan
-Write-Host "2. Remove members from DL" -ForegroundColor Cyan
-$choice = Read-Host "`nEnter your choice (1/2)"
+Write-Host "`n[1] Add members to DL" -ForegroundColor Cyan
+Write-Host "[2] Remove members from DL`n" -ForegroundColor Cyan
+$choice = Read-Host "Enter selection (1/2)"
 
-# Validate choice
-if ($choice -notin @('1','2')) {
+# Validate input
+if ($choice -notmatch '^[12]$') {
     Write-Host "Invalid selection!" -ForegroundColor Red
+    Disconnect-ExchangeOnline -Confirm:$false | Out-Null
     Exit
 }
 
 # Get inputs
 $dlGroup = Read-Host "`nEnter Distribution Group name"
-$users = Get-UserInput -prompt "Enter user UPNs to process:"
+$users = Get-UserInput -prompt "Enter user UPNs (one per line):"
 
 # Execute operation
 switch ($choice) {
