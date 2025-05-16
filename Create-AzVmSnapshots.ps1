@@ -3,19 +3,12 @@
 Azure VM Snapshot Creator with Smart Naming and Robust Validation
 
 .DESCRIPTION
-Creates Azure VM snapshots with automatic name truncation and enhanced safety checks
+Creates Azure VM snapshots with automatic name truncation and enhanced safety checks,
+and only reports “NotFound” if a VM truly isn’t in any subscription.
 #>
 
 #region Initialization
 Clear-Host
-Write-Host @"
-  ____  _  _  ____  _  _     ___  _  _  ____  ____  ____  _  _   
- (_  _)( \/ )( ___)( \( )___/ __)( \/ )( ___)(  _ \(_  _)( \/ )  
-  _)(_  \  /  )__)  )  ((___\__ \ \  /  )__)  )   / _)(_  \  /   
- (____)  \/  (____)(_)\_)   (___/  \/  (____)(_)\_)(____)  \/    
-                                                                  
-"@ -ForegroundColor Cyan
-
 Start-Transcript -Path ".\snapshots_$(Get-Date -Format 'yyyyMMdd_HHmmss').log" -Append
 
 # Configuration
@@ -56,7 +49,7 @@ catch {
 
 #region Subscription Handling
 Write-Host " [»] Validating subscriptions..." -ForegroundColor Yellow
-$validSubscriptions = Get-AzSubscription -ErrorAction SilentlyContinue | 
+$validSubscriptions = Get-AzSubscription -ErrorAction SilentlyContinue |
     Where-Object { $_.Id -match '^[0-9a-f]{8}-([0-9a-f]{4}-){3}[0-9a-f]{12}$' }
 
 if (-not $validSubscriptions) {
@@ -64,85 +57,81 @@ if (-not $validSubscriptions) {
     exit 1
 }
 
-$validSubscriptions | Select-Object Id | Out-File -FilePath $config.SubscriptionsFile -Force
+$validSubscriptions |
+    Select-Object Id |
+    Out-File -FilePath $config.SubscriptionsFile -Force
+
 $subscriptionIds = $validSubscriptions.Id
 Write-Host " [✓] Validated $($subscriptionIds.Count) subscriptions" -ForegroundColor Green
 #endregion
 
 #region Main Processing
-$vmList = Get-Content $config.VMNamesFile | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+$vmNames = Get-Content $config.VMNamesFile |
+    Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
 
-foreach ($subscriptionId in $subscriptionIds) {
-    Write-Host "`n [»] Processing Subscription: $subscriptionId" -ForegroundColor Cyan
-    
-    try {
-        Write-Host " [»] Setting subscription context..." -ForegroundColor Yellow -NoNewline
-        $context = Set-AzContext -SubscriptionId $subscriptionId -ErrorAction Stop
-        Write-Host "`r [✓] Context set to: $($context.Subscription.Name)    " -ForegroundColor Green
-    }
-    catch {
-        Write-Host "`r [×] Error setting context: $_" -ForegroundColor Red
-        continue
-    }
+foreach ($vmName in $vmNames) {
+    $vmName = $vmName.Trim()
+    $foundAnywhere = $false
 
-    foreach ($vmName in $vmList) {
-        $vmName = $vmName.Trim()
-        Write-Progress -Activity "Processing VMs" -Status "Current VM: $vmName" -PercentComplete -1
-        
+    foreach ($subscriptionId in $subscriptionIds) {
+        # Set context for this subscription
         try {
-            Write-Host " [»] Searching for VM: $vmName" -ForegroundColor Yellow -NoNewline
-            $vm = Get-AzVM -Name $vmName -Status -ErrorAction Stop
-            Write-Host "`r [✓] Found VM: $vmName    " -ForegroundColor Green
+            Set-AzContext -SubscriptionId $subscriptionId -ErrorAction Stop | Out-Null
         }
         catch {
-            $report.Add([PSCustomObject]@{
-                Timestamp       = Get-Date
-                SubscriptionID = $subscriptionId
-                VMName          = $vmName
-                DiskName        = "N/A"
-                SnapshotName    = "N/A"
-                Status          = "NotFound"
-                ErrorMessage    = "VM not found in subscription"
-                OperationTicket = $productionTicket
-            })
-            Write-Host "`r [×] VM not found: $vmName    " -ForegroundColor Red
+            Write-Host " [×] Could not set context to ${subscriptionId}: $_" -ForegroundColor Red
             continue
         }
 
-        # Extract resource group name safely
-        $resourceGroupName = $vm.Id.Split('/')[4]
-        if ([string]::IsNullOrEmpty($resourceGroupName)) {
-            Write-Host " [×] Failed to determine Resource Group for VM: $vmName" -ForegroundColor Red
+        # Try to retrieve the VM
+        try {
+            $vm = Get-AzVM -Name $vmName -Status -ErrorAction Stop
+        }
+        catch {
+            # VM not in this subscription → skip quietly
             continue
         }
 
-        # Process disks with smart naming
+        # We found the VM here
+        $foundAnywhere = $true
+        Write-Host "`n [✓] Found VM '$vmName' in subscription $subscriptionId" -ForegroundColor Green
+
+        # Determine resource group
+        $rg = $vm.ResourceGroupName
+        if ([string]::IsNullOrWhiteSpace($rg)) {
+            Write-Host " [×] VM has no ResourceGroupName, skipping snapshots here." -ForegroundColor Yellow
+            continue
+        }
+
+        # Collect disks
         $disks = @($vm.StorageProfile.OsDisk) + $vm.StorageProfile.DataDisks
+        $disks = $disks | Where-Object { $_ -and $_.Name }
 
         foreach ($disk in $disks) {
-            # Generate compliant snapshot name
-            $ticketPart = $productionTicket.Trim()
-            $diskPart = $disk.Name.Trim()
-            
-            $maxDiskLength = $config.MaxNameLength - $ticketPart.Length - 1  # 1 for underscore
-            $truncatedDisk = if ($maxDiskLength -gt 0) {
-                $diskPart.Substring(0, [Math]::Min($diskPart.Length, $maxDiskLength))
-            } else {
-                $diskPart = $null
+            # Get disk location
+            try {
+                $diskObj  = Get-AzDisk -ResourceGroupName $rg -DiskName $disk.Name -ErrorAction Stop
+                $location = $diskObj.Location
+            }
+            catch {
+                $location = $vm.Location
             }
 
-            $snapshotName = if ($truncatedDisk) {
-                "${truncatedDisk}_${ticketPart}"
+            # Build truly unique snapshot name: VMName_DiskName_Ticket
+            $ticketPart    = $productionTicket.Trim()
+            $rawBase       = "{0}_{1}" -f $vmName, $disk.Name.Trim()
+            $spaceForBase  = $config.MaxNameLength - ($ticketPart.Length + 1)
+            if ($spaceForBase -lt 0) { $spaceForBase = 0 }
+            $truncatedBase = if ($rawBase.Length -gt $spaceForBase) {
+                $rawBase.Substring(0, $spaceForBase)
             } else {
-                $ticketPart
+                $rawBase
             }
+            $snapshotName  = "{0}_{1}" -f $truncatedBase, $ticketPart
 
-            # Final length enforcement
-            $snapshotName = $snapshotName.Substring(0, [Math]::Min($snapshotName.Length, $config.MaxNameLength))
-
-            $reportEntry = [PSCustomObject]@{
+            $entry = [PSCustomObject]@{
                 Timestamp       = Get-Date
-                SubscriptionID = $subscriptionId
+                SubscriptionID  = $subscriptionId
                 VMName          = $vmName
                 DiskName        = $disk.Name
                 SnapshotName    = $snapshotName
@@ -151,30 +140,50 @@ foreach ($subscriptionId in $subscriptionIds) {
                 OperationTicket = $productionTicket
             }
 
+            # Create the snapshot
             try {
-                Write-Host " [»] Creating snapshot: $snapshotName" -ForegroundColor Yellow -NoNewline
-                $snapshotConfig = New-AzSnapshotConfig -SourceUri $disk.ManagedDisk.Id `
-                    -Location $vm.Location `
-                    -CreateOption Copy `
-                    -ErrorAction Stop
+                Write-Host " [»] Creating snapshot '$snapshotName' ..." -ForegroundColor Yellow -NoNewline
+                $cfg = New-AzSnapshotConfig `
+                    -SourceUri       $disk.ManagedDisk.Id `
+                    -Location        $location `
+                    -CreateOption    Copy `
+                    -ErrorAction     Stop
 
-                $null = New-AzSnapshot -Snapshot $snapshotConfig `
-                    -SnapshotName $snapshotName `
-                    -ResourceGroupName $resourceGroupName `
-                    -ErrorAction Stop
+                New-AzSnapshot `
+                    -Snapshot          $cfg `
+                    -SnapshotName      $snapshotName `
+                    -ResourceGroupName $rg `
+                    -ErrorAction       Stop | Out-Null
 
-                $reportEntry.Status = "Success"
-                Write-Host "`r [✓] Snapshot created: $snapshotName    " -ForegroundColor Green
+                $entry.Status = "Success"
+                Write-Host "`r [✓] Created: $snapshotName" -ForegroundColor Green
             }
             catch {
-                $reportEntry.Status = "Failed"
-                $reportEntry.ErrorMessage = $_.Exception.Message
-                Write-Host "`r [×] Error creating snapshot: $($_.Exception.Message)    " -ForegroundColor Red
+                $entry.Status       = "Failed"
+                $entry.ErrorMessage = $_.Exception.Message
+                Write-Host "`r [×] Error: $($_.Exception.Message)" -ForegroundColor Red
             }
             finally {
-                $report.Add($reportEntry)
+                $report.Add($entry)
             }
         }
+        # end foreach disk
+    }
+    # end foreach subscription
+
+    # If we never found the VM, record one NotFound entry
+    if (-not $foundAnywhere) {
+        Write-Host "`n [×] VM not found in any subscription: $vmName" -ForegroundColor Red
+        $report.Add([PSCustomObject]@{
+            Timestamp       = Get-Date
+            SubscriptionID  = "N/A"
+            VMName          = $vmName
+            DiskName        = "N/A"
+            SnapshotName    = "N/A"
+            Status          = "NotFound"
+            ErrorMessage    = "VM not found in any subscription"
+            OperationTicket = $productionTicket
+        })
     }
 }
 #endregion
@@ -182,20 +191,17 @@ foreach ($subscriptionId in $subscriptionIds) {
 #region Reporting & Cleanup
 $report | Export-Csv -Path $config.ReportCSV -NoTypeInformation
 
-# Display summary
-$successCount = ($report | Where-Object Status -eq 'Success').Count
-$failureCount = ($report | Where-Object Status -eq 'Failed').Count
-$notFoundCount = ($report | Where-Object Status -eq 'NotFound').Count
+$succ = ($report | Where-Object Status -eq 'Success').Count
+$fail = ($report | Where-Object Status -eq 'Failed').Count
+$none = ($report | Where-Object Status -eq 'NotFound').Count
 
-Write-Host "`n┌──────────────────────────────┐" -ForegroundColor Cyan
-Write-Host "│         Summary Report        │" -ForegroundColor Cyan
-Write-Host "├────────────────┬─────────────┤" -ForegroundColor Cyan
-Write-Host "│ Successful     │ $($successCount.ToString().PadLeft(11)) │" -ForegroundColor Green
-Write-Host "├────────────────┼─────────────┤" -ForegroundColor Cyan
-Write-Host "│ Failed         │ $($failureCount.ToString().PadLeft(11)) │" -ForegroundColor Red
-Write-Host "├────────────────┼─────────────┤" -ForegroundColor Cyan
-Write-Host "│ Not Found      │ $($notFoundCount.ToString().PadLeft(11)) │" -ForegroundColor Yellow
-Write-Host "└────────────────┴─────────────┘" -ForegroundColor Cyan
+Write-Host "`n+-------------------+-----------+" -ForegroundColor Cyan
+Write-Host "|   Summary Report  |    Count  |" -ForegroundColor Cyan
+Write-Host "+-------------------+-----------+" -ForegroundColor Cyan
+Write-Host "| Successful        | $($succ.ToString().PadLeft(9)) |" -ForegroundColor Green
+Write-Host "| Failed            | $($fail.ToString().PadLeft(9)) |" -ForegroundColor Red
+Write-Host "| Not Found         | $($none.ToString().PadLeft(9)) |" -ForegroundColor Yellow
+Write-Host "+-------------------+-----------+" -ForegroundColor Cyan
 
 Write-Host "`n [✓] Report generated: $($config.ReportCSV)" -ForegroundColor Green
 Stop-Transcript
